@@ -1,13 +1,15 @@
+from PIL import Image  # Explicitly import Image module
 import cv2
-import numpy as np
-import time
 import os
+import numpy as np
+from google.colab.patches import cv2_imshow
+import time
 
 # Define paths
 labelsPath = 'obj.names'
 weightsPath = 'crop_weed_detection.weights'
 configPath = 'crop_weed.cfg'
-imagePath = 'images/weed_1.jpeg'
+imagePath = 'images/weed_2.jpeg'
 
 # Check if required files exist
 for file in [labelsPath, weightsPath, configPath, imagePath]:
@@ -17,9 +19,6 @@ for file in [labelsPath, weightsPath, configPath, imagePath]:
 
 # Load class labels
 LABELS = open(labelsPath).read().strip().split("\n")
-
-# Color selection for bounding boxes
-COLORS = np.random.randint(0, 255, size=(len(LABELS), 3), dtype="uint8")
 
 # Load YOLO model
 print("[INFO]     : Loading YOLO model...")
@@ -33,14 +32,14 @@ image = cv2.imread(imagePath)
 confi = 0.5  # Confidence threshold
 thresh = 0.5  # Non-Maximum Suppression (NMS) threshold
 
-# Get output layer names (Fix applied)
+# Get output layer names
 ln = net.getLayerNames()
 unconnected_layers = net.getUnconnectedOutLayers()
 
-# Fix for OpenCV 4.11.0+
-if len(unconnected_layers.shape) == 1:  # 1D array case
+# Fix for OpenCV 4.11+
+if len(unconnected_layers.shape) == 1:
     ln = [ln[i - 1] for i in unconnected_layers]
-else:  # 2D array case
+else:
     ln = [ln[i[0] - 1] for i in unconnected_layers]
 
 # Prepare the image for YOLO
@@ -48,12 +47,13 @@ blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (512, 512), swapRB=True, crop=Fal
 net.setInput(blob)
 
 # Run YOLO detection
-start = time.time()
+start_time = time.time()
 layerOutputs = net.forward(ln)
-end = time.time()
-print(f"[INFO]     : YOLO took {end - start:.6f} seconds")
+end_time = time.time()
 
-# Initialize bounding boxes, confidences, and class IDs
+print(f"[INFO]     : YOLO took {end_time - start_time:.6f} seconds")
+
+# Initialize lists for detections
 boxes = []
 confidences = []
 classIDs = []
@@ -64,44 +64,39 @@ for output in layerOutputs:
         scores = detection[5:]
         classID = np.argmax(scores)
         confidence = scores[classID]
-
         if confidence > confi:
-            # Scale bounding box coordinates
+            # Extract bounding box coordinates
             box = detection[0:4] * np.array([W, H, W, H])
             (centerX, centerY, width, height) = box.astype("int")
-
-            # Get top-left coordinates
             x = int(centerX - (width / 2))
             y = int(centerY - (height / 2))
 
-            # Save detection details
+            # Store correct bounding box format
             boxes.append([x, y, int(width), int(height)])
             confidences.append(float(confidence))
             classIDs.append(classID)
 
 # Apply Non-Maximum Suppression (NMS)
-idxs = cv2.dnn.NMSBoxes(boxes, confidences, confi, thresh)
-print("[INFO]     : Detections done, drawing bounding boxes...")
+if len(boxes) > 0:
+    idxs = cv2.dnn.NMSBoxes(boxes, confidences, confi, thresh)
+else:
+    idxs = []
 
-# Draw bounding boxes if detections exist
+# Display detailed detection info
 if len(idxs) > 0:
+    print("\n[DETECTIONS] :")
     for i in idxs.flatten():
-        (x, y) = (boxes[i][0], boxes[i][1])
-        (w, h) = (boxes[i][2], boxes[i][3])
+        detected_label = LABELS[classIDs[i]]
+        print(f"- {detected_label} (Confidence: {confidences[i]:.2f})")
 
-        color = [int(c) for c in COLORS[classIDs[i]]]
-        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+# Determine the final verdict (most frequent class detected)
+if len(classIDs) > 0:
+    most_frequent_class = max(set(classIDs), key=classIDs.count)
+    detected_label = LABELS[most_frequent_class]  # Get the final class
+    print(f"\n{detected_label}")  # Print only "Weed" or "Crop"
+else:
+    print("\nUnknown")  # If nothing is detected
 
-        print(f"[OUTPUT]   : Detected label -> {LABELS[classIDs[i]]}")
-        print(f"[ACCURACY] : {confidences[i]:.4f}")
+print("\n[STATUS]   : Completed")
 
-        text = f"{LABELS[classIDs[i]]}: {confidences[i]:.4f}"
-        cv2.putText(image, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-# Show the output image
-cv2.imshow('Output', image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
-
-print("[STATUS]   : Completed")
-print("[END]")
